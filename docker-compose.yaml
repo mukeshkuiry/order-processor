@@ -1,0 +1,101 @@
+
+services:
+  db:
+    image: postgres:15
+    container_name: postgress
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: vendor_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+
+
+  message_broker:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    restart: always
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  order_api:
+    build:
+      context: ./services/order-api
+      dockerfile: Dockerfile
+    container_name: order_api
+    restart: always
+    ports:
+      - "5000:5000"
+    depends_on:
+      db:
+        condition: service_started
+      message_broker:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://postgres:password@db/vendor_db
+      AMQP_URL: amqp://guest:guest@message_broker:5672/
+
+  order_worker:
+    build:
+      context: ./services/order-worker
+      dockerfile: Dockerfile
+    container_name: order_worker
+    restart: always
+    depends_on:
+      db:
+        condition: service_started
+      message_broker:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://postgres:password@db/vendor_db
+      AMQP_URL: amqp://guest:guest@message_broker:5672/
+      VENDOR_API_URL: http://vendor_mock:4000
+
+  vendor_mock:
+    build:
+      context: ./services/vendor-mock
+      dockerfile: Dockerfile
+    container_name: vendor_mock
+    restart: always
+    ports:
+      - "4000:4000"
+    depends_on:
+      db:
+        condition: service_started
+      message_broker:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://postgres:password@db/vendor_db
+      AMQP_URL: amqp://guest:guest@message_broker:5672/
+
+  vendor_sync:
+    build:
+      context: ./services/vendor-sync
+      dockerfile: Dockerfile
+    container_name: vendor_sync
+    restart: always
+    depends_on:
+      db:
+        condition: service_started
+      message_broker:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://postgres:password@db/vendor_db
+      AMQP_URL: amqp://guest:guest@message_broker:5672/
+      VENDOR_API_URL: http://vendor_mock:4000
+
+volumes:
+  pgdata:
